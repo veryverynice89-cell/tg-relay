@@ -1,0 +1,26 @@
+name: avto to Telegram relay
+on:
+  repository_dispatch:
+    types: [notify]
+  workflow_dispatch:
+    inputs:
+      text:
+        description: test message
+        required: false
+        default: "relay test"
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send to Telegram
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MSG: ${{ github.event.client_payload.text || github.event.inputs.text }}
+        run: |
+          set -eu
+          if [ -z "${TG_TOKEN:-}" ] || [ -z "${TG_CHAT:-}" ]; then echo "::error::no secrets"; exit 1; fi
+          : "${MSG:=(empty)}"
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" --data-urlencode "chat_id=${TG_CHAT}" --data-urlencode "text=${MSG}" -d "disable_web_page_preview=true")
+          echo "tg http: $code"
+          [ "$code" = "200" ] || { echo "::error::tg $code"; exit 1; }
