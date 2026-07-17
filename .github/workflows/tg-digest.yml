@@ -1,0 +1,29 @@
+name: TG digest (news)
+
+on:
+  schedule:
+    - cron: '30 4 * * *'        # 07:30 МСК (GitHub может задержать на ~10-15 мин)
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: окно в часах
+        required: false
+        default: "24"
+  repository_dispatch:
+    types: [digest]
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install --quiet requests beautifulsoup4
+      - name: Build and send digest
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          HOURS: ${{ github.event.inputs.hours || github.event.client_payload.hours || '24' }}
+        run: python tg_digest_gh.py
