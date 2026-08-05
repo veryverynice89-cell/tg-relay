@@ -1,0 +1,51 @@
+name: zakupay weekly report to Telegram DM
+# Отчёт Закупай в личку Вадима (1700499633): сводка (sendMessage) + HTML-файл (sendDocument).
+# Триггер — repository_dispatch type=zakupay-report от пятничного крона на VPS.
+# Секрет TELEGRAM_BOT_TOKEN уже в репо (бот @gosanalitika_notify_bot). chat_id — личка (не секрет).
+# Полезная нагрузка (summary/html_b64) передаётся ТОЛЬКО через env: → в логи публичного репо не попадает.
+on:
+  repository_dispatch:
+    types: [zakupay-report]
+  workflow_dispatch:
+    inputs:
+      summary:
+        description: тестовая сводка
+        required: false
+        default: "zakupay report test"
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send weekly report to Telegram DM
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: "1700499633"
+          SUMMARY: ${{ github.event.client_payload.summary || github.event.inputs.summary }}
+          HTML_B64: ${{ github.event.client_payload.html_b64 }}
+          FNAME: ${{ github.event.client_payload.filename }}
+        run: |
+          set -eu
+          if [ -z "${TG_TOKEN:-}" ]; then echo "::error::no TELEGRAM_BOT_TOKEN secret"; exit 1; fi
+          fname="${FNAME:-zakupay_report.html}"
+          : "${SUMMARY:=Закупай — недельный отчёт}"
+          # 1) текстовая сводка
+          c1=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+            "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TG_CHAT}" \
+            --data-urlencode "text=${SUMMARY}" \
+            -d disable_web_page_preview=true)
+          echo "sendMessage http: $c1"
+          # 2) HTML-файл (если пришёл)
+          c2=skip
+          if [ -n "${HTML_B64:-}" ]; then
+            printf %s "$HTML_B64" | base64 -d > "$fname"
+            c2=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+              "https://api.telegram.org/bot${TG_TOKEN}/sendDocument" \
+              -F "chat_id=${TG_CHAT}" \
+              -F "document=@${fname};type=text/html")
+            echo "sendDocument http: $c2"
+          fi
+          if [ "$c1" != "200" ] || { [ "$c2" != "skip" ] && [ "$c2" != "200" ]; }; then
+            echo "::error::telegram send failed (msg=$c1 doc=$c2)"; exit 1
+          fi
