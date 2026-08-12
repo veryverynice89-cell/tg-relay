@@ -1,0 +1,37 @@
+name: digest post to Telegram
+on:
+  push:
+    branches: [main]
+    paths: ["posts/**"]
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Send new post files to Telegram
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          set -eu
+          [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT:-}" ] || { echo "::error::no secrets"; exit 1; }
+          files=$(git diff --name-only --diff-filter=AM HEAD^ HEAD -- 'posts/**' || true)
+          [ -n "$files" ] || { echo "no new post files"; exit 0; }
+          for f in $files; do
+            [ -f "$f" ] || continue
+            # Telegram limit is 4096 chars: split on line boundaries, byte threshold (bytes >= chars)
+            rm -f /tmp/chunk_*
+            awk -v max=3800 '
+              function flush(){ if (buf!="") { printf "%s", buf > sprintf("/tmp/chunk_%03d", ++n); close(sprintf("/tmp/chunk_%03d", n)); buf="" } }
+              { if (length(buf) + length($0) + 1 > max) flush(); buf = buf $0 "\n" }
+              END { flush() }' "$f"
+            for c in /tmp/chunk_*; do
+              [ -f "$c" ] || continue
+              code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+                --data-urlencode "chat_id=${TG_CHAT}" --data-urlencode "text@${c}" -d "disable_web_page_preview=true")
+              echo "tg http: $code ($f / $c)"
+              [ "$code" = "200" ] || { echo "::error::tg $code"; exit 1; }
+            done
+          done
